@@ -1,0 +1,301 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Scanner de Texto</title>
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+<style>
+  :root {
+    --ink: #1a1d1a;
+    --paper: #f6f4ee;
+    --line: #d8d3c4;
+    --accent: #3a5f3a;
+    --accent-dim: #8fa88f;
+    --danger: #8a3a2a;
+  }
+
+  * { box-sizing: border-box; }
+
+  html, body {
+    margin: 0;
+    padding: 0;
+    height: 100%;
+    background: var(--ink);
+    color: var(--paper);
+    font-family: 'Courier New', ui-monospace, monospace;
+    overscroll-behavior: none;
+  }
+
+  #app {
+    display: flex;
+    flex-direction: column;
+    height: 100dvh;
+    max-width: 480px;
+    margin: 0 auto;
+  }
+
+  header {
+    padding: 14px 16px 10px;
+    border-bottom: 1px solid #2b2f2b;
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+  }
+
+  header h1 {
+    font-size: 15px;
+    letter-spacing: 0.02em;
+    margin: 0;
+    font-weight: 600;
+    color: var(--paper);
+  }
+
+  header span {
+    font-size: 11px;
+    color: var(--accent-dim);
+  }
+
+  #camera-stage {
+    position: relative;
+    flex: 1;
+    min-height: 0;
+    background: #000;
+    overflow: hidden;
+  }
+
+  video {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+  }
+
+  #frame-guide {
+    position: absolute;
+    inset: 8% 6%;
+    border: 1.5px dashed rgba(246, 244, 238, 0.55);
+    border-radius: 4px;
+    pointer-events: none;
+  }
+
+  #frame-guide::before {
+    content: 'aponte para o texto';
+    position: absolute;
+    top: -22px;
+    left: 0;
+    font-size: 10px;
+    letter-spacing: 0.04em;
+    color: rgba(246, 244, 238, 0.6);
+  }
+
+  #status-bar {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    padding: 8px 14px;
+    font-size: 11px;
+    color: var(--accent-dim);
+    background: linear-gradient(transparent, rgba(0,0,0,0.6));
+    text-align: center;
+    min-height: 32px;
+  }
+
+  #controls {
+    padding: 12px 16px;
+    display: flex;
+    gap: 10px;
+    border-top: 1px solid #2b2f2b;
+  }
+
+  button {
+    font-family: inherit;
+    font-size: 13px;
+    padding: 12px 14px;
+    border-radius: 3px;
+    border: 1px solid var(--line);
+    background: transparent;
+    color: var(--paper);
+    cursor: pointer;
+  }
+
+  #capture-btn {
+    flex: 1;
+    background: var(--accent);
+    border-color: var(--accent);
+    font-weight: 600;
+    letter-spacing: 0.01em;
+  }
+
+  #capture-btn:disabled {
+    opacity: 0.5;
+  }
+
+  #result-panel {
+    border-top: 1px solid #2b2f2b;
+    padding: 12px 16px 16px;
+    background: #14171400;
+  }
+
+  #result-panel.hidden { display: none; }
+
+  #result-panel textarea {
+    width: 100%;
+    min-height: 110px;
+    resize: vertical;
+    background: var(--paper);
+    color: var(--ink);
+    border: 1px solid var(--line);
+    border-radius: 3px;
+    padding: 10px;
+    font-family: inherit;
+    font-size: 13px;
+    line-height: 1.5;
+  }
+
+  #result-actions {
+    display: flex;
+    gap: 8px;
+    margin-top: 8px;
+  }
+
+  #copy-btn {
+    flex: 1;
+    background: var(--accent);
+    border-color: var(--accent);
+  }
+
+  #copy-btn.copied {
+    background: var(--accent-dim);
+    border-color: var(--accent-dim);
+    color: var(--ink);
+  }
+
+  #error-msg {
+    color: var(--danger);
+    font-size: 12px;
+    padding: 0 16px 10px;
+  }
+
+  #error-msg.hidden { display: none; }
+
+  canvas { display: none; }
+</style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <h1>Scanner de Texto</h1>
+    <span id="lang-tag">pt</span>
+  </header>
+
+  <div id="camera-stage">
+    <video id="video" autoplay playsinline muted></video>
+    <div id="frame-guide"></div>
+    <div id="status-bar">toque em "capturar" quando o texto estiver nítido</div>
+  </div>
+
+  <div id="error-msg" class="hidden"></div>
+
+  <div id="controls">
+    <button id="capture-btn">Capturar texto</button>
+  </div>
+
+  <div id="result-panel" class="hidden">
+    <textarea id="result-text" placeholder="O texto reconhecido vai aparecer aqui..."></textarea>
+    <div id="result-actions">
+      <button id="copy-btn">Copiar</button>
+      <button id="rescan-btn">Nova captura</button>
+    </div>
+  </div>
+
+  <canvas id="canvas"></canvas>
+</div>
+
+<script>
+const video = document.getElementById('video');
+const canvas = document.getElementById('canvas');
+const captureBtn = document.getElementById('capture-btn');
+const statusBar = document.getElementById('status-bar');
+const resultPanel = document.getElementById('result-panel');
+const resultText = document.getElementById('result-text');
+const copyBtn = document.getElementById('copy-btn');
+const rescanBtn = document.getElementById('rescan-btn');
+const errorMsg = document.getElementById('error-msg');
+
+function showError(msg) {
+  errorMsg.textContent = msg;
+  errorMsg.classList.remove('hidden');
+}
+
+async function startCamera() {
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: { ideal: 'environment' } },
+      audio: false
+    });
+    video.srcObject = stream;
+  } catch (err) {
+    showError('Não foi possível acessar a câmera: ' + err.message + ' (verifique se o site tem permissão e se está em HTTPS)');
+  }
+}
+
+async function captureAndRecognize() {
+  captureBtn.disabled = true;
+  resultPanel.classList.add('hidden');
+  statusBar.textContent = 'lendo o texto, aguarde...';
+
+  canvas.width = video.videoWidth;
+  canvas.height = video.videoHeight;
+  const ctx = canvas.getContext('2d');
+  ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+  try {
+    const result = await Tesseract.recognize(canvas, 'por', {
+      logger: (info) => {
+        if (info.status === 'recognizing text') {
+          const pct = Math.round(info.progress * 100);
+          statusBar.textContent = 'reconhecendo... ' + pct + '%';
+        }
+      }
+    });
+
+    const text = result.data.text.trim();
+    resultText.value = text || '(nenhum texto encontrado — tente aproximar ou melhorar a luz)';
+    resultPanel.classList.remove('hidden');
+    statusBar.textContent = 'toque em "capturar" quando o texto estiver nítido';
+  } catch (err) {
+    showError('Erro ao processar: ' + err.message);
+    statusBar.textContent = 'toque em "capturar" quando o texto estiver nítido';
+  } finally {
+    captureBtn.disabled = false;
+  }
+}
+
+copyBtn.addEventListener('click', async () => {
+  try {
+    await navigator.clipboard.writeText(resultText.value);
+    copyBtn.textContent = 'Copiado!';
+    copyBtn.classList.add('copied');
+    setTimeout(() => {
+      copyBtn.textContent = 'Copiar';
+      copyBtn.classList.remove('copied');
+    }, 1500);
+  } catch (err) {
+    resultText.select();
+    document.execCommand('copy');
+  }
+});
+
+rescanBtn.addEventListener('click', () => {
+  resultPanel.classList.add('hidden');
+  resultText.value = '';
+});
+
+captureBtn.addEventListener('click', captureAndRecognize);
+
+startCamera();
+</script>
+</body>
+</html>
